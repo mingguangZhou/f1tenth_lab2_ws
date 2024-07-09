@@ -56,8 +56,8 @@ private:
     void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
     {
         const std::vector<float>& ranges_now = scan_msg->ranges;
-        int size = sizeof(ranges_now) / sizeof(ranges_now[0]);
-        // std::cout << "size of ranges_now: "<< ranges_now << std::endl;
+        int size = ranges_now.size();
+        // std::cout << "size of ranges_now: "<< size << std::endl;
         // handle the time diff
         int sec = scan_msg->header.stamp.sec;
         // std::cout << "sec: "<< sec << std::endl;
