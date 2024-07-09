@@ -39,6 +39,12 @@ install(TARGETS
   safety_node
   DESTINATION lib/${PROJECT_NAME})
 
+# Add compiler and linker flags for debug information
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  target_compile_options(safety_node PRIVATE -g -O0)
+  target_link_options(safety_node PRIVATE -g)
+endif()
+
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})
 
