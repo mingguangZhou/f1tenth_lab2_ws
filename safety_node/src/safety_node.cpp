@@ -1,5 +1,5 @@
 #include "rclcpp/rclcpp.hpp"
-/// CHECK: include needed ROS msg type headers and libraries
+/// include needed ROS msg type headers and libraries
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
@@ -39,8 +39,8 @@ private:
     // initiate some global values
     double speed = 0.0;
 
-    double time_prev = 0.0;
-    std::vector<float> ranges_prev;
+    // double time_prev = 0.0;
+    // std::vector<float> ranges_prev;
 
     /// create ROS subscribers and publishers
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_publisher_;
@@ -55,74 +55,59 @@ private:
 
     void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
     {
-        const std::vector<float>& ranges_now = scan_msg->ranges;
-        int size = ranges_now.size();
-        // std::cout << "size of ranges_now: "<< size << std::endl;
-        // handle the time diff
-        int sec = scan_msg->header.stamp.sec;
-        // std::cout << "sec: "<< sec << std::endl;
-        int nsec = scan_msg->header.stamp.nanosec; // nano second
-        // std::cout << "nanosec: "<< nsec << std::endl;
-        double time_now = static_cast<double>(sec) + (static_cast<double>(nsec) / 1e9);
-        // std::cout << "time_now: "<< time_now << std::endl;
-        // std::cout << "time_prev: "<< time_prev << std::endl;
-        float dt = time_now - time_prev;
-        // std::cout << "Error dt: " << dt << std::endl;
-        if (dt <= 0.0) 
+        /// Calculate TTC
+        // Get the array of scan angles
+        float angle_min = scan_msg->angle_min;
+        // float angle_max = scan_msg->angle_max;
+        float angle_increment = scan_msg->angle_increment;
+        int num_ranges = scan_msg->ranges.size();
+        
+        std::vector<float> scan_angles(num_ranges);
+        for (int i = 0; i < num_ranges; ++i) 
         {
-            std::cerr << "Error: tiemstamp is incorrect!" << std::endl;
+            scan_angles[i] = angle_min + i * angle_increment;
         }
 
-        if (time_prev!=0)
+        // Get the array of range rates
+        std::vector<float> range_rates(num_ranges);
+        for (int i = 0; i < num_ranges; ++i) 
         {
-            /// calculate TTC
-            std::vector<float> range_rates(size);
-            std::transform(ranges_now.begin(),ranges_now.end(),ranges_prev.begin(),range_rates.begin(),
-                [dt](float rn, float rp)
-                {
-                    double rate = -(rn - rp) / dt;
-                    if (std::isnan(rn) || std::isinf(rn) || std::isnan(rp) || std::isinf(rp) || rate < 0) 
-                    {
-                        return 0.0;
-                    } else { return rate; }
-                });
-            std::vector<float> TTC_array(size);
-            for (int i = 0; i < size; i++) {
-                if (range_rates[i] != 0) {
-                    TTC_array[i] = ranges_now[i] / range_rates[i];
-                } else {
-                    TTC_array[i] = INFINITY; // Use INFINITY macro from cmath library
-                }
-            }
+            range_rates[i] = std::max(speed * std::cos(scan_angles[i]), 0.0);
+        }
 
-            /// publish drive/brake message
-            float min_value = TTC_array[0];
-            int min_index = 0;
-
-            for (int i = 1; i < size; i++) {
-                if (TTC_array[i] < min_value) {
-                    min_value = TTC_array[i];
-                    min_index = i;
-                }
-            }
-
-            if (min_value < 1.0)
-            {
-                auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
-                drive_msg.drive.speed = 0.0;
-                drive_publisher_ ->publish(drive_msg);
-                float AEB_angle = (scan_msg->angle_min + min_index * (scan_msg->angle_increment)) * (180.0 / M_PI);
-                RCLCPP_INFO(this->get_logger(), "AEB activated with TTC:  %f at the angle %f", min_value, AEB_angle);
+        // Get the TTC array
+        std::vector<float> TTC_array(num_ranges);
+        for (int i = 0; i < num_ranges; ++i) {
+            if (std::isnan(scan_msg->ranges[i])) {
+                TTC_array[i] = std::numeric_limits<float>::infinity();
+            } else {
+                TTC_array[i] = (range_rates[i] != 0) ? scan_msg->ranges[i] / range_rates[i] : std::numeric_limits<float>::infinity();
             }
         }
-        ranges_prev = ranges_now;
-        time_prev = time_now;
+
+        /// publish drive/brake message
+        float min_value = TTC_array[0];
+        int min_index = 0;
+
+        for (int i = 1; i < num_ranges; i++) {
+            if (TTC_array[i] < min_value) {
+                min_value = TTC_array[i];
+                min_index = i;
+            }
+        }
+
+        if (min_value < 1.3)
+        {
+            auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
+            drive_msg.drive.speed = 0.0;
+            drive_publisher_ ->publish(drive_msg);
+            float AEB_angle = (angle_min + min_index * (angle_increment)) * (180.0 / M_PI);
+            RCLCPP_INFO(this->get_logger(), "AEB activated with TTC:  %f at the angle %f", min_value, AEB_angle);
+        }
     }
-
-
-
-
 };
+
+
 int main(int argc, char ** argv) {
     rclcpp::init(argc, argv);
     rclcpp::spin(std::make_shared<Safety>());
